@@ -1,0 +1,29 @@
+# AWS Academy Student Guide PDF 下載器
+
+此專案用於自動下載 AWS Academy 課程中，被 LTI 與 Canvas LMS 隱藏且無提供下載按鈕的嵌入式 PDF 教材 (Student Guide)。
+
+## 腳本原理 (v10)
+教材透過深層跨域 iframe (OOPIF) 及客製化 PDF.js (Rustici SCORM player) 渲染，無法直接取得檔案 URL。
+本腳本使用 **Selenium + CDP (Chrome DevTools Protocol)**，透過 `Page.addScriptToEvaluateOnNewDocument` 在所有 iframe 建立前注入 **JavaScript Hook**。
+當網頁準備呼叫 `window.pdfjsLib.getDocument` 載入 PDF 時，Hook 會攔截這個 Promise，並將完成的 `pdfDoc` 物件保存到全域變數中。隨後 Python 腳本只需遍歷所有的 iframe 結構，就能直接從記憶體中提取出 PDF 二進位資料並存檔。
+
+## 檔案介紹
+* `grab_student_guide_v10.py`：最終成功版本（JS Hook 記憶體攔截法）。
+* `失敗腳本/`：包含 v1 到 v9 的開發過程與測試版本（保留作參考）。
+* `downloads/`：存放下載結果的 PDF 檔案（已加入 `.gitignore`，不會被推送到 GitHub）。
+
+## 執行方式與結果
+1. **環境準備**：確保已安裝 Python，並安裝 Selenium (`pip install selenium`)。
+2. **執行腳本**：
+   ```bash
+   python grab_student_guide_v10.py
+   ```
+3. **操作流程**：腳本會自動開啟 Chrome 視窗。請手動登入 AWS Academy，登入完成後回到終端機按下 `Enter`。
+4. **結果**：腳本會等待約 30 秒讓 LTI 與 PDF 播放器完全渲染，接著自動搜刮深層 iframe，並將提取出的 PDF 儲存至 `downloads/student_guide.pdf`。
+
+## 踩坑紀錄與失敗原因 (v1-v9)
+* **找不到網路請求檔案**：一開始透過瀏覽器 Network Tab 什麼都抓不到。因為 PDF 並非以單一 `*.pdf` 檔案傳輸，而是由 PDF.js 使用 Range requests (分塊請求) 載入，並在 HTML Canvas 上渲染。
+* **Canvas API 無權限 (v1-v3)**：嘗試呼叫 Canvas 官方 API，但出現 403 錯誤。因為教材是由外部工具 (Vocareum/ContentController) 透過 LTI 掛載，不屬於 Canvas 的原生檔案系統。
+* **無法直接列印 (v4-v5)**：嘗試呼叫 Chrome CDP 的 `Page.printToPDF`，但只印出 Canvas 外層的「封面」。真實內容被跨域 iframe (Cross-Origin iframe) 安全機制隔離。
+* **CDP 網路封包攔截失敗 (v6-v7)**：就算使用 CDP 監聽底層網路封包，因為內容是由第三方 CDN 加上複雜的授權 Token 提供，且分段下載，難以重組完整檔案。
+* **變數被閉包隱藏 (v8-v9)**：雖然成功定位到負責渲染的 iframe 與 PDF.js，但該客製化播放器沒有暴露標準的 `PDFViewerApplication` 全域變數，重要物件被封裝在閉包 (Closure) 中，無法直接用常規 JavaScript 提取。最終才促成了 v10 的預先 Hook 攔截法。
